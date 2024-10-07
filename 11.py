@@ -6,7 +6,7 @@ import json
 import time
 import re
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from bs4 import BeautifulSoup
 from telegram.helpers import escape_markdown
 
@@ -40,15 +40,23 @@ def save_sent_emails(sent_emails):
         json.dump(list(string_emails), f)
 
 def send_message(text):
-    try:    
-        time.sleep(4)  # 增加4秒延迟
-        text = escape_markdown(text)  # 清理文本以适应 Markdown
-        response = requests.post(f'https://api.telegram.org/bot{TELEGRAM_API_KEY}/sendMessage',
-                                 data={'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'Markdown'})
-        response.raise_for_status()
-        logging.info(f"Message sent: {text}")
+    try:
+        # Telegram 消息最大长度为 4096 字符，这里将消息截断为每段 4000 字符，以避免超限
+        MAX_MESSAGE_LENGTH = 4000
+        
+        # 分割消息成多个部分
+        messages = [text[i:i + MAX_MESSAGE_LENGTH] for i in range(0, len(text), MAX_MESSAGE_LENGTH)]
+        
+        for message_part in messages:
+            time.sleep(4)  # 增加4秒延迟
+            message_part = escape_markdown(message_part)  # 清理文本以适应 Markdown
+            response = requests.post(f'https://api.telegram.org/bot{TELEGRAM_API_KEY}/sendMessage',
+                                     data={'chat_id': TELEGRAM_CHAT_ID, 'text': message_part, 'parse_mode': 'Markdown'})
+            response.raise_for_status()
+            logging.info(f"Message part sent: {message_part}")
     except Exception as e:
         logging.error(f"Error sending message to Telegram: {e}")
+
 
 # 解码邮件头
 def decode_header(header):
@@ -109,6 +117,9 @@ def fetch_emails():
             try:
                 _, msg_data = mail.fetch(email_id, '(RFC822)')
                 msg = email.message_from_bytes(msg_data[0][1])
+
+                # 使用 Message-ID 作为唯一标识符
+                message_id = msg['Message-ID']
                 
                 subject = clean_subject(decode_header(msg['subject']))
                 sender = decode_header(msg['from'])
@@ -116,7 +127,7 @@ def fetch_emails():
                 body = get_email_body(msg)
 
                 # 检查是否已发送
-                if email_id in sent_emails:  # 使用 email_id 来判断
+                if message_id in sent_emails:  # 使用 Message-ID 来判断
                     logging.info(f"Email already sent: {subject}")
                     continue
                 
@@ -131,7 +142,7 @@ def fetch_emails():
                 send_message(message)
 
                 # 记录发送的邮件
-                sent_emails.add(email_id)  # 使用邮件 ID 记录
+                sent_emails.add(message_id)  # 使用 Message-ID 记录
 
             except Exception as e:
                 logging.error(f"Error processing email ID {email_id}: {e}")
